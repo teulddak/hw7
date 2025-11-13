@@ -1,87 +1,50 @@
 import json
 import urllib.request
 import time
-import datetime
 import os
 import subprocess
 
+# ===== 네이버 주식 API 요청 =====
+item_code = "373220"
+url = f"https://m.stock.naver.com/api/stock/{item_code}/integration"
+raw_data = urllib.request.urlopen(url).read()
+json_data = json.loads(raw_data)
 
-# ------------------------------------------
-# 1) 네이버 API에서 현재 가격 정보 가져오기
-# ------------------------------------------
-def fetch_stock_data(item_code="373220"):
-    url = f"https://m.stock.naver.com/api/stock/{item_code}/integration"
-    raw_data = urllib.request.urlopen(url).read()
-    data = json.loads(raw_data)
+# ===== 우리가 찾을 날짜 =====
+target_dates = ["20251111", "20250604"]   # ← 여기 수정됨
 
-    # 최신 날짜 데이터(하루 단위) 추출
-    today_info = data["dealTrendInfos"][0]
+# ===== 날짜별 결과 저장 =====
+results = {}
 
-    result = {
-        "날짜": today_info["bizdate"],
-        "종가": today_info.get("closePrice"),
-        "고가": today_info.get("compareToPreviousClosePrice"),
-        "거래량": today_info.get("accumulatedTradingVolume"),
-        "외국인소진율": today_info.get("foreignerHoldRatio")
-    }
+for day in json_data.get("dealTrendInfos", []):
+    bizdate = day.get("bizdate")
+    if bizdate in target_dates:
+        results[bizdate] = {
+            "종가": day.get("closePrice"),
+            "거래량": day.get("accumulatedTradingVolume"),
+            "외국인소진율": day.get("foreignerHoldRatio")
+        }
 
-    return result
+# ===== 파일로 저장 =====
+now = time.strftime("%Y-%m-%d_%H-%M-%S")
+filename = f"stock_record_{now}.txt"
 
+with open(filename, "w", encoding="utf-8") as f:
+    for td in target_dates:
+        f.write(f"날짜: {td}\n")
+        if td in results:
+            f.write(f"종가: {results[td]['종가']}\n")
+            f.write(f"거래량: {results[td]['거래량']}\n")
+            f.write(f"외국인소진율: {results[td]['외국인소진율']}\n")
+        else:
+            f.write("데이터 없음\n")
+        f.write("\n")
 
-# ------------------------------------------
-# 2) 데이터를 파일에 저장하기
-# ------------------------------------------
-def save_to_file(data):
-    today = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    filename = f"stock_record_{today}.txt"
-
-    with open(filename, "w", encoding="utf-8") as f:
-        for k, v in data.items():
-            f.write(f"{k}: {v}\n")
-
-    print(f"[저장 완료] {filename}")
-    return filename
-
-
-# ------------------------------------------
-# 3) GitHub 자동 업로드
-# ------------------------------------------
-def git_push(filename):
-    try:
-        subprocess.run(["git", "add", filename], check=True)
-        subprocess.run(["git", "commit", "-m", f"자동 업로드: {filename}"], check=True)
-        subprocess.run(["git", "push", "origin", "main"], check=True)
-        print("[Git 업로드 완료]")
-    except Exception as e:
-        print("Git 업로드 실패:", e)
+# ===== Git 자동 업로드 =====
+subprocess.run(["git", "add", "."])
+subprocess.run(["git", "commit", "-m", f"자동 업로드: {filename}"])
+subprocess.run(["git", "push"])
 
 
-# ------------------------------------------
-# 4) 1분마다 7번 반복 실행
-# ------------------------------------------
-def main_loop():
-    for i in range(7):
-        print(f"\n===== {i + 1} / 7 번째 실행 =====")
-
-        # API 호출
-        data = fetch_stock_data()
-
-        # 파일 저장
-        filename = save_to_file(data)
-
-        # Github 업로드
-        git_push(filename)
-
-        # 1분 대기
-        if i < 6:
-            print("1분 대기 중...\n")
-            time.sleep(60)
-
-    print("\n===== 모든 작업 완료 =====")
-
-
-# ------------------------------------------
-# 코드 실행
-# ------------------------------------------
-if __name__ == "__main__":
-    main_loop()
+print("========== GitHub 업로드 완료 ==========")
+print(f"파일 생성됨: {filename}")
