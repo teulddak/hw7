@@ -3,31 +3,30 @@ import urllib.request
 import time
 import subprocess
 
-# ===== 종목 코드 =====
 item_code = "373220"
-
-# ===== 찾을 날짜 =====
 target_dates = ["20251111", "20250604"]
 
-# ===== 헤더 설정 (네이버 차트 API는 필수) =====
+# ===== 네이버 차트 API 강제 헤더 =====
 headers = {
-    "User-Agent": "Mozilla/5.0"
+    "User-Agent": "Mozilla/5.0",
+    "Referer": f"https://m.stock.naver.com/domestic/stock/{item_code}",
+    "Accept": "application/json"
 }
 
-# ===== 1분마다 7번 반복 =====
 for i in range(7):
 
     print(f"\n===== 실행 {i+1}/7 =====")
 
-    # ===== 1) 차트 API (시가/고가/저가/종가/거래량) =====
+    # ===== 1) 차트 API 요청 =====
     chart_url = f"https://api.stock.naver.com/chart/domestic/item/{item_code}?periodType=day&count=600"
     req = urllib.request.Request(chart_url, headers=headers)
     chart_raw = urllib.request.urlopen(req).read()
     chart_json = json.loads(chart_raw)
 
-    # JSON 구조 확인 후 파싱
     chart_data = {}
-    if "result" in chart_json:
+
+    # JSON 구조가 맞는지 확인
+    if "result" in chart_json and "chartDatas" in chart_json["result"]:
         for day in chart_json["result"]["chartDatas"]:
             bizdate = day.get("localDate")
             chart_data[bizdate] = {
@@ -38,7 +37,7 @@ for i in range(7):
                 "거래량": day.get("volume")
             }
     else:
-        print("⚠️ chart API에서 데이터를 받지 못했습니다.")
+        print("⚠️ 차트 API 응답 실패. 헤더 문제 혹은 API 차단.")
 
     # ===== 2) 외국인 소진율 =====
     integ_url = f"https://m.stock.naver.com/api/stock/{item_code}/integration"
@@ -73,7 +72,7 @@ for i in range(7):
 
             f.write("\n")
 
-    # ===== 4) GitHub 자동 업로드 =====
+    # ===== 4) Git 자동 업로드 =====
     subprocess.run(["git", "add", "."])
     subprocess.run(["git", "commit", "-m", f"자동 업로드: {filename}"])
     subprocess.run(["git", "push"])
