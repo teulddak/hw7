@@ -1,93 +1,137 @@
-import yfinance as yf
+import os
+import requests
+import csv
+from datetime import datetime, timedelta
+import math
 import time
-import subprocess
-from datetime import datetime
+import urllib.parse
 
-# ===========================================
-# 🔥 설정 파트
-# ===========================================
-ticker = "373220.KS"  # LG에너지솔루션(한국 야후 티커)
-target_dates = ["20250604", "20251111"]  # 주인님이 원하는 과거 날짜 목록
+# ======================================================
+# ⚙️ 서비스키 설정
+# ======================================================
 
-# 야후 날짜 변환 (YYYYMMDD → YYYY-MM-DD)
-def convert_date(d):
-    return f"{d[:4]}-{d[4:6]}-{d[6:8]}"
+# 주인님이 준 "디코딩된 서비스키"
+DECODED_KEY = "580565d89ab9b438d47e868d48ed7991af3cfb92447a00d7b33dc73e77e34246"
 
-# 범위 계산
-start = convert_date(min(target_dates))
-end = convert_date(max(target_dates))
+# 👉 기상청 API는 Python 환경에서 반드시 인코딩된 키를 요구
+SERVICE_KEY = urllib.parse.quote(DECODED_KEY, safe="")
 
-# ===========================================
-# 🔥 7번 반복 실행
-# ===========================================
-for run in range(1, 8):
-    print(f"\n===== 실행 {run}/7 =====")
+# ======================================================
+# API 설정
+# ======================================================
+API_URL = "https://apis.data.go.kr/1360000/AsosHourlyInfoService/getWthrDataList"
+STATION_ID = "108"  # 서울
+OUTPUT_DIR = "./HW7_output"
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-    # ===========================================
-    # 🔥 야후 데이터 다운로드
-    # ===========================================
-    df = yf.download(ticker, start=start, end=end)
 
-    if df.empty:
-        print("❌ 야후 데이터 다운로드 실패")
+# ======================================================
+# 📌 ASOS 시간구간 데이터 요청 함수
+# ======================================================
+def fetch_window(tag, start_dt, end_dt):
+    print("\n=====================================================")
+    print(f"📡 [{tag}] 데이터 요청 시작")
+    print(f"▶ 기간: {start_dt} ~ {end_dt}")
+    print("=====================================================")
+
+    page_no = 1
+    num_rows = 500
+    all_rows = []
+
+    while True:
+        params = {
+            "serviceKey": SERVICE_KEY,
+            "dataType": "JSON",
+            "dataCd": "ASOS",
+            "dateCd": "HR",
+            "startDt": start_dt.strftime("%Y%m%d"),
+            "startHh": start_dt.strftime("%H"),
+            "endDt": end_dt.strftime("%Y%m%d"),
+            "endHh": end_dt.strftime("%H"),
+            "stnIds": STATION_ID,
+            "pageNo": page_no,
+            "numOfRows": num_rows
+        }
+
+        response = requests.get(API_URL, params=params)
+        response.raise_for_status()
+        res_json = response.json()
+
+        body = res_json.get("response", {}).get("body", {})
+        items = body.get("items", {}).get("item", [])
+        total_count = body.get("totalCount", 0)
+
+        if not items:
+            break
+
+        print(f"📄 페이지 {page_no} 수집 ({len(items)}건)")
+        all_rows.extend(items)
+
+        max_pages = math.ceil(total_count / num_rows) if total_count else 1
+        if page_no >= max_pages:
+            break
+
+        page_no += 1
+        time.sleep(0.1)
+
+    csv_path = os.path.join(OUTPUT_DIR, f"{tag}_stn{STATION_ID}.csv")
+
+    if all_rows:
+        keys = sorted({k for row in all_rows for k in row.keys()})
+
+        with open(csv_path, "w", newline="", encoding="utf-8-sig") as f:
+            writer = csv.DictWriter(f, fieldnames=keys)
+            writer.writeheader()
+            writer.writerows(all_rows)
+
+        print("-----------------------------------------------------")
+        print(f"✅ [{tag}] 저장 완료!")
+        print(f"📊 총 {len(all_rows)}건")
+        print(f"💾 CSV 위치: {csv_path}")
+        print("-----------------------------------------------------")
     else:
-        print("✅ 야후 데이터 다운로드 성공")
+        print(f"❌ [{tag}] 데이터 없음")
 
-    # 인덱스를 'YYYYMMDD' 형식으로 맞춤
-    df.index = df.index.strftime("%Y%m%d")
+    return all_rows
 
-    # ===========================================
-    # 🔥 요청 날짜만 추출
-    # ===========================================
-    results = {}
 
-    for d in target_dates:
-        if d in df.index:
-            row = df.loc[d]
-            results[d] = {
-                "시가": float(row["Open"]),
-                "고가": float(row["High"]),
-                "저가": float(row["Low"]),
-                "종가": float(row["Close"]),
-                "거래량": int(row["Volume"])
-            }
-        else:
-            results[d] = "데이터 없음"
+# ======================================================
+# 📌 과제 요구 시간 구간
+# ======================================================
 
-    # ===========================================
-    # 🔥 파일로 저장
-    # ===========================================
-    filename = f"stock_record_run{run}.txt"
+# 1) 2024-12-04 15시~18시
+win1_start = datetime(2024, 12, 4, 15)
+win1_end   = datetime(2024, 12, 4, 18)
 
-    with open(filename, "w", encoding="utf-8") as f:
-        f.write("======= 과거 데이터 (야후) =======\n\n")
-        for d in target_dates:
-            f.write(f"날짜: {d}\n")
-            if results[d] == "데이터 없음":
-                f.write("데이터 없음\n\n")
-            else:
-                f.write(f"시가: {results[d]['시가']:,}\n")
-                f.write(f"고가: {results[d]['고가']:,}\n")
-                f.write(f"저가: {results[d]['저가']:,}\n")
-                f.write(f"종가: {results[d]['종가']:,}\n")
-                f.write(f"거래량: {results[d]['거래량']:,}\n\n")
+# 2) 2025-06-04 12시~16시
+win2_start = datetime(2025, 6, 4, 12)
+win2_end   = datetime(2025, 6, 4, 16)
 
-    print(f"📄 파일 생성됨 → {filename}")
+# 3) 실행일 기준 2일 전 00~03시
+now = datetime.now()
+before2 = now - timedelta(days=2)
+win3_start = before2.replace(hour=0, minute=0, second=0, microsecond=0)
+win3_end   = win3_start.replace(hour=3)
 
-    # ===========================================
-    # 🔥 GitHub 자동 업로드
-    # ===========================================
-    subprocess.run(["git", "add", "."])
-    subprocess.run(["git", "commit", "-m", f"자동 업로드: {filename}"])
-    subprocess.run(["git", "push"])
+windows = [
+    ("window1_20241204_15_18", win1_start, win1_end),
+    ("window2_20250604_12_16", win2_start, win2_end),
+    ("window3_execminus2_00_03", win3_start, win3_end)
+]
 
-    print(f"📌 업로드 완료 → {filename}")
 
-    # ===========================================
-    # 🔥 다음 실행까지 1분 대기
-    # ===========================================
-    if run < 7:
-        print("⏳ 1분 대기 중...\n")
-        time.sleep(60)
+# ======================================================
+# 🚀 실행부
+# ======================================================
+print("\n=============================================")
+print("  HW7 기상청 ASOS 시간자료 수집 프로그램 실행")
+print("=============================================")
 
-print("\n===== 전체 완료되었습니다 주인님! =====")
+total = 0
+for tag, s, e in windows:
+    total += len(fetch_window(tag, s, e))
+
+print("\n=============================================")
+print(f"🎉 전체 데이터 총합: {total}건")
+print(f"📁 모든 결과는 HW7_output 폴더에 저장되었습니다.")
+print("=============================================")
